@@ -33,7 +33,7 @@ def generate_markdown_report(task_description, solver_params, results, convergen
     if convergence_plot:
         tmpfile = BytesIO()
         convergence_plot.savefig(tmpfile, format='png')
-        encoded = base64.b64encode(tmpfile.getvalue()).decode('utf-8')
+        encoded = base64.b64encode(tmpgile.getvalue()).decode('utf-8')
         report += "## Convergence Plot\n\n"
         report += f'<img src="data:image/png;base64,{encoded}">\n\n'
 

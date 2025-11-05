@@ -1,6 +1,6 @@
 import numpy as np
 import networkx as nx
-from src.graph import PhysarumGraph
+from graph import PhysarumGraph
 
 class DiscreteSolver:
     """

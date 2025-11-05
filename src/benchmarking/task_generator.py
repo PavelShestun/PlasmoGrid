@@ -1,5 +1,5 @@
 import networkx as nx
-from src.graph import PhysarumGraph
+from graph import PhysarumGraph
 
 def generate_erdos_renyi_graph(n, p, seed=None):
     """
