@@ -2,6 +2,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
+import plotly.graph_objects as go
 
 def visualize_graph(graph, title=""):
     """
@@ -44,3 +45,29 @@ def animate_discrete_solver(solver, num_frames):
     ani = animation.FuncAnimation(fig, update, frames=num_frames, interval=200, repeat=False)
     plt.close(fig) # Prevent duplicate plot
     return HTML(ani.to_jshtml())
+
+def plot_interactive_convergence(d_path_history, title="D-Path Length Convergence"):
+    """
+    Creates an interactive convergence plot using Plotly.
+
+    Args:
+        d_path_history (list): A list of D-Path lengths at each iteration.
+        title (str): The title of the plot.
+    """
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=list(range(len(d_path_history))),
+        y=d_path_history,
+        mode='lines+markers',
+        name='D-Path Length'
+    ))
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Iteration",
+        yaxis_title="D-Path Length",
+        hovermode="x unified"
+    )
+
+    fig.show()
