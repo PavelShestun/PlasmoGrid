@@ -1,115 +1,104 @@
 import numpy as np
 import networkx as nx
+from scipy.sparse import csc_matrix
+from scipy.sparse.linalg import cg
 from graph import PhysarumGraph
 
 class DiscreteSolver:
     """
-    Solves for the flow and pressure in a Physarum network using the
-    canonical discrete model, with T-Point convergence criterion.
+    Implements the canonical discrete Physarum solver with scalability improvements.
+    This version uses an iterative linear solver (Conjugate Gradient) and supports
+    efficient, "hot" updates to the graph structure, making it suitable for
+    dynamic environments.
     """
     def __init__(self, graph: PhysarumGraph, source_node, sink_node, flow_rate=1.0):
+        """Initializes the DiscreteSolver and builds the initial linear system."""
         self.graph = graph
         self.source_node = source_node
         self.sink_node = sink_node
         self.flow_rate = flow_rate
-        self.d_path_lengths = []
+        self._build_linear_system()
+        self._old_conductivities = {edge: self.graph.edges[edge]['conductivity'] for edge in self.graph.edges()}
 
-    def solve(self):
-        """
-        Solves the system of linear equations for pressures and calculates flows.
-        """
+    def _build_linear_system(self):
+        """Constructs the sparse linear system (Lp = b) from the graph."""
+        self.node_list = list(self.graph.nodes())
+        self.node_map = {node: i for i, node in enumerate(self.node_list)}
+
         num_nodes = self.graph.number_of_nodes()
         if num_nodes == 0:
-            return np.array([]), {}
+            self.L = csc_matrix((0, 0))
+            self.b = np.array([])
+            return
 
-        node_list = list(self.graph.nodes())
-        node_map = {node: i for i, node in enumerate(node_list)}
+        L_sparse = nx.laplacian_matrix(self.graph, nodelist=self.node_list, weight='conductivity').asformat('lil')
 
-        # Build the matrix for the linear system (Laplacian)
-        L = nx.laplacian_matrix(self.graph, nodelist=node_list, weight='conductivity').toarray()
+        sink_idx = self.node_map[self.sink_node]
+        L_sparse[sink_idx, :] = 0
+        L_sparse[sink_idx, sink_idx] = 1.0
 
-        # Ground one node to make the system solvable
-        L[node_map[self.sink_node], :] = 0
-        L[node_map[self.sink_node], node_map[self.sink_node]] = 1
+        self.L = L_sparse.asformat('csc')
 
-        b = np.zeros(num_nodes)
-        b[node_map[self.source_node]] = self.flow_rate
-        b[node_map[self.sink_node]] = 0 # Ground node
+        self.b = np.zeros(num_nodes)
+        self.b[self.node_map[self.source_node]] = self.flow_rate
 
-        # Solve for pressures
-        try:
-            pressures_flat = np.linalg.solve(L, b)
-            pressures = {node: pressures_flat[node_map[node]] for node in node_list}
-        except np.linalg.LinAlgError:
-            # Fallback to pseudoinverse if singular
-            pressures_flat = np.linalg.pinv(L) @ b
-            pressures = {node: pressures_flat[node_map[node]] for node in node_list}
+    def solve(self):
+        """Solves the linear system for pressures and calculates flows."""
+        if self.L.shape[0] == 0: return {}, {}
 
-        # Calculate flows
+        pressures_flat, info = cg(self.L, self.b)
+        if info != 0:
+            pressures_flat = np.linalg.pinv(self.L.toarray()) @ self.b
+
+        pressures = {node: pressures_flat[self.node_map[node]] for node in self.node_list}
+
         flows = {}
         for u, v in self.graph.edges():
-            conductivity = self.graph.edges[u, v]['conductivity']
-            p_u = pressures.get(u, 0)
-            p_v = pressures.get(v, 0)
-            flows[(u, v)] = conductivity * (p_u - p_v)
+            p_u, p_v = pressures.get(u, 0), pressures.get(v, 0)
+            flows[(u, v)] = self.graph.edges[u, v]['conductivity'] * (p_u - p_v)
 
         return pressures, flows
 
-    def find_d_path(self, flows):
-        """
-        Finds the dominant path (D-Path) from source to sink.
-        """
-        path = [self.source_node]
-        current_node = self.source_node
-        while current_node != self.sink_node:
-            neighbors = list(self.graph.neighbors(current_node))
-            if not neighbors:
-                return None # Path not found
-
-            next_node = max(neighbors, key=lambda n: abs(flows.get((current_node, n), 0)))
-
-            if next_node in path:
-                return None # Avoid cycles
-
-            path.append(next_node)
-            current_node = next_node
-        return path
-
-    def run_simulation_with_t_point(self, max_iterations=100, t_point_stability=5):
-        """
-        Run simulation until the D-Path length stabilizes (T-Point).
-        """
-        last_d_path_length = -1
-        stability_counter = 0
-
-        for i in range(max_iterations):
-            pressures, flows = self.solve()
-            self.graph.update_conductivities(flows)
-
-            d_path = self.find_d_path(flows)
-
-            if d_path:
-                current_d_path_length = sum(self.graph[u][v].get('weight', 1) for u, v in zip(d_path, d_path[1:]))
-                self.d_path_lengths.append(current_d_path_length)
-
-                if current_d_path_length == last_d_path_length:
-                    stability_counter += 1
-                else:
-                    stability_counter = 0
-
-                last_d_path_length = current_d_path_length
-
-                if stability_counter >= t_point_stability:
-                    print(f"T-Point reached at iteration {i+1}.")
-                    return
-            else:
-                 self.d_path_lengths.append(None)
-
-
     def run_simulation(self, num_iterations):
-        """
-        Run the full simulation for a fixed number of iterations.
-        """
+        """Runs the simulation for a fixed number of iterations."""
         for _ in range(num_iterations):
+            self._hot_update_laplacian()
             pressures, flows = self.solve()
             self.graph.update_conductivities(flows)
+
+    def _hot_update_laplacian(self):
+        """Efficiently updates the Laplacian matrix based on conductivity changes."""
+        self.L = self.L.asformat('lil')
+        for u, v in self.graph.edges():
+            edge = (u, v)
+            new_cond = self.graph.edges[edge]['conductivity']
+            old_cond = self._old_conductivities.get(edge, 0)
+            delta = new_cond - old_cond
+
+            if abs(delta) > 1e-9:
+                u_idx, v_idx = self.node_map[u], self.node_map[v]
+                self.L[u_idx, u_idx] += delta
+                self.L[v_idx, v_idx] += delta
+                self.L[u_idx, v_idx] -= delta
+                self.L[v_idx, u_idx] -= delta
+
+            self._old_conductivities[edge] = new_cond
+
+        sink_idx = self.node_map[self.sink_node]
+        self.L[sink_idx, :] = 0
+        self.L[sink_idx, sink_idx] = 1.0
+        self.L = self.L.asformat('csc')
+
+    def add_edge(self, u, v, **attr):
+        """Adds an edge and performs a hot update on the linear system."""
+        if not self.graph.has_edge(u, v):
+            self.graph.add_edge(u, v, **attr)
+            self._build_linear_system() # Rebuild is safest when topology changes
+            self._old_conductivities = {edge: self.graph.edges[edge]['conductivity'] for edge in self.graph.edges()}
+
+    def remove_edge(self, u, v):
+        """Removes an edge and performs a hot update on the linear system."""
+        if self.graph.has_edge(u, v):
+            self.graph.remove_edge(u, v)
+            self._build_linear_system() # Rebuild is safest
+            self._old_conductivities = {edge: self.graph.edges[edge]['conductivity'] for edge in self.graph.edges()}
