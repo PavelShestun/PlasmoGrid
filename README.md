@@ -9,10 +9,11 @@ This framework provides implementations of several key mathematical models of Ph
 ## Features
 
 - **Multiple Solver Models**:
-  - **Canonical Discrete Solver**: A fast, iterative solver based on the electrical circuit analogy of the Physarum network. Includes an efficient T-Point convergence criterion.
-  - **Monte Carlo Physarum Machine (MCPM)**: A stochastic, agent-based model for exploring complex solution spaces.
-  - **Explore-and-Fuse**: A cellular automaton model for solving Steiner tree problems.
-  - **PDE Solver**: A continuous model based on the Finite Difference Method for solving problems in a continuous domain.
+- **Hybrid Solver**: A two-level system combining the strengths of agent-based exploration and graph-based optimization.
+  - **Explorer (MCPM)**: Agents explore a continuous, dynamic environment.
+  - **Optimizer (DiscreteSolver)**: An iterative graph solver optimizes paths on the emergent network discovered by the explorer.
+- **Dynamic Adaptation**: Solvers are designed to handle dynamic environments where graphs can change over time.
+- **Scalability**: The `DiscreteSolver` uses an iterative conjugate gradient method, making it suitable for larger graphs.
 - **Benchmarking Suite**:
   - A task generator for creating various graph types (grid, random, etc.).
   - Implementations of standard heuristics (e.g., MST for Steiner Tree) for comparison.
